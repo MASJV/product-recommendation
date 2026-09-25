@@ -2,7 +2,7 @@
 
 import streamlit as st
 
-from recommender import build_dataset, compare_models, create_data, recommend
+from source_code.recommender import build_dataset, compare_models, create_data, recommend
 
 st.set_page_config(page_title="Product Recommendation", page_icon="🛒")
 
