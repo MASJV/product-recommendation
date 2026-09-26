@@ -30,11 +30,14 @@ if st.button("Suggest Recommendations", type="primary"):
         recs = recommend(model, all_products, bought, k=5)
         recs = recs.merge(products, on="product")
         st.subheader("Recommended for you")
-        for i, row in enumerate(recs.itertuples(), start=1):
+        number = 1
+        for index, row in recs.iterrows():
             with st.container(border=True):
-                st.markdown(f"**{i}. {row.product}**  \n{row.category} · ₹{row.price}")
+                st.markdown(f"**{number}. {row['product']}**")
+                st.write(f"{row['category']} · ₹{row['price']}")
+            number = number + 1
 
 with st.expander("Model comparison"):
     st.write("Each model was tuned with GridSearchCV. The best one is used for recommendations.")
     st.dataframe(results, hide_index=True)
-    st.write(f"**Selected model:** {results.loc[0, 'Model']}")
+    st.write(f"**Selected model:** {results['Model'][0]}")

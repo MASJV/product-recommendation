@@ -1,18 +1,16 @@
-"""Product recommendation logic (scikit-learn).
+"""Product recommendation logic using scikit-learn.
 
-1. Data: a small product catalog and the purchase history of 1,000 customers,
-   generated with a fixed random seed. Each customer shops in one or two
-   related categories.
-2. Recommendation as classification: for every customer, one purchased product
-   is hidden. The model sees the other products they bought (as 0/1 columns)
-   and has to predict the hidden one.
-3. Five models are tuned with GridSearchCV and compared on top-5 accuracy.
-   The best one is used to recommend products.
+Steps:
+1. create_data()    -> makes a product list and purchases of 1,000 customers
+2. build_dataset()  -> converts purchases into X (inputs) and y (answers)
+3. compare_models() -> tunes 5 models with GridSearchCV and picks the best one
+4. recommend()      -> suggests products using the best model
 
 Run `python recommender.py` to see the model comparison in the terminal.
 """
 
-import numpy as np
+import random
+
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -22,6 +20,12 @@ from sklearn.naive_bayes import BernoulliNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 
+
+# ---------------------------------------------------------------
+# 1. Creating the data
+# ---------------------------------------------------------------
+
+# category -> products in that category
 catalog = {
     "Cricket": ["Cricket Bat", "Cricket Ball", "Stumps", "Cricket Helmet", "Batting Gloves",
                 "Batting Pads", "Cricket Kit Bag"],
@@ -40,6 +44,7 @@ catalog = {
     "Camping": ["Tent", "Sleeping Bag", "Torch", "Trekking Backpack", "Camping Stove"],
 }
 
+# category -> another category its customers often buy from
 related = {
     "Cricket": "Fitness", "Football": "Running", "Badminton": "Fitness", "Fitness": "Running",
     "Running": "Fitness", "Mobile": "Laptop", "Laptop": "Mobile", "Kitchen": "Stationery",
@@ -47,96 +52,173 @@ related = {
 }
 
 
-def create_data(n_customers=1000, seed=42):
-    """Return the product table and the purchase history."""
-    rng = np.random.default_rng(seed)
-    products = pd.DataFrame(
-        [(name, cat) for cat, names in catalog.items() for name in names],
-        columns=["product", "category"],
-    )
-    products["price"] = rng.integers(2, 60, len(products)) * 100
+# ---------------------------------------------------------------------------
+# Step 1: Create the dataset
+# ---------------------------------------------------------------------------
 
-    rows = []
-    for customer in range(1, n_customers + 1):
-        category = rng.choice(list(catalog))
-        items = list(rng.choice(catalog[category], rng.integers(2, 6), replace=False))
-        if rng.random() < 0.5:  # some customers also shop in a related category
-            other = related[category]
-            items += list(rng.choice(catalog[other], rng.integers(1, 3), replace=False))
-        for item in items:
-            rows.append((customer, item))
 
-    purchases = pd.DataFrame(rows, columns=["customer_id", "product"])
+def create_data():
+    random.seed(7)  # same data every time the program runs
+
+    # Product table: product, category, price
+    product_rows = []
+    for category in catalog:
+        for product in catalog[category]:
+            price = random.randint(2, 59) * 100
+            product_rows.append([product, category, price])
+
+    products = pd.DataFrame(product_rows, columns=["product", "category", "price"])
+
+    # Purchase table: customer_id, product
+    purchase_rows = []
+    for customer_id in range(1, 1001):
+        # every customer mainly shops in one category
+        main_category = random.choice(list(catalog))
+        count = random.randint(2, 5)
+        bought = random.sample(catalog[main_category], count)
+
+        # half of the customers also buy from a related category
+        if random.random() < 0.5:
+            other_category = related[main_category]
+            count = random.randint(1, 2)
+            bought = bought + random.sample(catalog[other_category], count)
+
+        for product in bought:
+            purchase_rows.append([customer_id, product])
+
+    purchases = pd.DataFrame(purchase_rows, columns=["customer_id", "product"])
+
     return products, purchases
 
 
+# ---------------------------------------------------------------
+# 2. Building X and y
+# ---------------------------------------------------------------
+
 def build_dataset(products, purchases):
-    """One row per (customer, hidden product): X = other products bought, y = hidden product."""
+    """For every product a customer bought, hide it and use the rest as input.
+
+    X -> one column per product, 1 = bought, 0 = not bought
+    y -> the hidden product the model has to predict
+    """
     all_products = list(products["product"])
-    X, y = [], []
-    for _, basket in purchases.groupby("customer_id")["product"]:
-        basket = list(basket)
-        for hidden in basket:
-            X.append([1 if (p in basket and p != hidden) else 0 for p in all_products])
-            y.append(hidden)
-    return pd.DataFrame(X, columns=all_products), pd.Series(y)
+
+    X = []
+    y = []
+
+    for customer_id in purchases["customer_id"].unique():
+        basket = list(purchases[purchases["customer_id"] == customer_id]["product"])
+
+        for hidden_product in basket:
+            row = []
+            for product in all_products:
+                if product in basket and product != hidden_product:
+                    row.append(1)
+                else:
+                    row.append(0)
+
+            X.append(row)
+            y.append(hidden_product)
+
+    X = pd.DataFrame(X, columns=all_products)
+    y = pd.Series(y)
+
+    return X, y
 
 
-# model -> hyperparameters to try
-MODELS = {
-    "K-Nearest Neighbors": (KNeighborsClassifier(),
-                            {"n_neighbors": [5, 15, 30], "metric": ["cosine", "euclidean"]}),
-    "Decision Tree": (DecisionTreeClassifier(random_state=42),
-                      {"max_depth": [10, 20, None], "min_samples_leaf": [1, 5]}),
-    "Random Forest": (RandomForestClassifier(random_state=42),
-                      {"n_estimators": [50, 100], "max_depth": [10, None]}),
-    "Logistic Regression": (LogisticRegression(max_iter=1000),
-                            {"C": [0.1, 1, 10]}),
-    "Naive Bayes": (BernoulliNB(),
-                    {"alpha": [0.1, 0.5, 1.0]}),
+# ---------------------------------------------------------------
+# 3. Comparing models
+# ---------------------------------------------------------------
+
+models = {
+    "K-Nearest Neighbors": KNeighborsClassifier(),
+    "Decision Tree": DecisionTreeClassifier(random_state=42),
+    "Random Forest": RandomForestClassifier(random_state=42),
+    "Logistic Regression": LogisticRegression(max_iter=1000),
+    "Naive Bayes": BernoulliNB(),
+}
+
+# hyperparameter values that GridSearchCV will try for each model
+param_grids = {
+    "K-Nearest Neighbors": {"n_neighbors": [5, 15, 30], "metric": ["cosine", "euclidean"]},
+    "Decision Tree": {"max_depth": [10, 20, None], "min_samples_leaf": [1, 5]},
+    "Random Forest": {"n_estimators": [50, 100], "max_depth": [10, None]},
+    "Logistic Regression": {"C": [0.1, 1, 10]},
+    "Naive Bayes": {"alpha": [0.1, 0.5, 1.0]},
 }
 
 
 def top5_score(model, X, y):
     """Top-5 accuracy: is the hidden product among the model's 5 best guesses?"""
-    return top_k_accuracy_score(y, model.predict_proba(X), k=5, labels=model.classes_)
+    probabilities = model.predict_proba(X)
+    return top_k_accuracy_score(y, probabilities, k=5, labels=model.classes_)
 
 
 def compare_models(X, y):
-    """Tune every model, test it, and return a results table and the best model."""
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    results, best_model, best_score = [], None, -1
-    for name, (model, params) in MODELS.items():
-        search = GridSearchCV(model, params, cv=3, scoring=top5_score)
-        search.fit(X_train, y_train)
+    results = []
+    best_model = None
+    best_score = 0
 
-        model = search.best_estimator_
-        probs = model.predict_proba(X_test)
-        top5 = top_k_accuracy_score(y_test, probs, k=5, labels=model.classes_)
-        acc = accuracy_score(y_test, model.predict(X_test))
-        results.append({"Model": name, "Best parameters": str(search.best_params_),
-                        "Top-5 accuracy": round(top5, 3), "Accuracy": round(acc, 3)})
+    for name in models:
+        # try every combination of hyperparameters with 3-fold cross validation
+        grid = GridSearchCV(models[name], param_grids[name], cv=3, scoring=top5_score)
+        grid.fit(X_train, y_train)
+        model = grid.best_estimator_
+
+        # check the tuned model on the test data
+        top5 = top5_score(model, X_test, y_test)
+        accuracy = accuracy_score(y_test, model.predict(X_test))
+
+        results.append([name, str(grid.best_params_), round(top5, 3), round(accuracy, 3)])
 
         if top5 > best_score:
-            best_score, best_model = top5, model
+            best_score = top5
+            best_model = model
 
-    results = pd.DataFrame(results).sort_values("Top-5 accuracy", ascending=False)
-    return results.reset_index(drop=True), best_model
+    results = pd.DataFrame(results, columns=["Model", "Best parameters", "Top-5 accuracy", "Accuracy"])
+    results = results.sort_values(by="Top-5 accuracy", ascending=False)
+    results = results.reset_index(drop=True)
 
+    return results, best_model
+
+
+# ---------------------------------------------------------------
+# 4. Recommending products
+# ---------------------------------------------------------------
 
 def recommend(model, all_products, bought, k=5):
-    row = pd.DataFrame([[1 if p in bought else 0 for p in all_products]], columns=all_products)
-    probs = model.predict_proba(row)[0]
-    ranking = pd.DataFrame({"product": model.classes_, "score": probs})
-    ranking = ranking[~ranking["product"].isin(bought)]
-    return ranking.sort_values("score", ascending=False).head(k)
+    # convert the user's products into the same 0/1 format as X
+    row = []
+    for product in all_products:
+        if product in bought:
+            row.append(1)
+        else:
+            row.append(0)
+
+    row = pd.DataFrame([row], columns=all_products)
+
+    # probability of each product being the next purchase
+    probabilities = model.predict_proba(row)[0]
+    scores = pd.DataFrame({"product": model.classes_, "score": probabilities})
+
+    # remove products the user already has, keep the top k
+    scores = scores[scores["product"].isin(bought) == False]
+    scores = scores.sort_values(by="score", ascending=False)
+
+    return scores.head(k)
 
 
 if __name__ == "__main__":
     products, purchases = create_data()
     X, y = build_dataset(products, purchases)
-    print(f"Products: {len(products)}, purchases: {len(purchases)}, training rows: {len(X)}\n")
+    print("Products:", len(products))
+    print("Purchases:", len(purchases))
+    print("Training rows:", len(X))
+    print()
+
     results, best_model = compare_models(X, y)
     print(results.to_string(index=False))
-    print(f"\nBest model: {results.loc[0, 'Model']}")
+    print()
+    print("Best model:", results["Model"][0])

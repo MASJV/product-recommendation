@@ -1,6 +1,6 @@
 # Product Recommendation System
 
-Select the products a customer has bought, and the app suggests 5 other products to buy (e.g. Cricket Bat + Cricket Ball → Stumps, Batting Pads, Batting Gloves ...).
+Select the products a customer has bought, and the app suggests 5 other products to buy (e.g. Cricket Bat + Cricket Ball → Stumps, Cricket Helmet, Cricket Kit Bag ...)
 
 Built with scikit-learn and Streamlit.
 
